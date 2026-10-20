@@ -1,0 +1,23 @@
+# Binaries
+analyzer
+analyzer.exe
+*.exe
+*.out
+
+# Object files
+*.o
+*.obj
+*.asan.o
+
+# Debug symbols and sanitizer logs
+*.dSYM/
+*.log
+asan.log*
+
+# Generated test and analysis reports
+demo_report.html
+
+# Editor and OS folders / files
+.DS_Store
+.vscode/
+.idea/
