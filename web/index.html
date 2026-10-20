@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Static Code Quality Analyzer — Compiler Design Lab</title>
+    <!-- Modern Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+        <div class="header-left">
+            <div class="logo-badge">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+                </svg>
+            </div>
+            <div class="brand">
+                <h1>Static Code Quality Analyzer</h1>
+                <div class="brand-tags">
+                    <span class="badge c11">C11 Standard</span>
+                    <span class="badge safe">
+                        <span class="pulse-dot"></span> 0 Instructions Executed (Static AST Only)
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="header-center">
+            <div class="sample-picker-container">
+                <label for="sampleSelect">Sample Preset:</label>
+                <select id="sampleSelect" class="select-input">
+                    <option value="demo">Demo Telemetry Pipeline (samples/demo.c)</option>
+                    <option value="chk_w002">Assignment in Condition (chk_w002)</option>
+                    <option value="chk_w007">Deep Nesting & Complexity (chk_w007)</option>
+                    <option value="chk_w011">Unsafe Memory & String Functions (chk_w011)</option>
+                    <option value="chk_w013">Compile-Time Division by Zero (chk_w013)</option>
+                    <option value="sym_shadowing">Variable Scope Shadowing (sym_shadowing)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <button id="btnAnalyze" class="btn btn-primary">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <span>Run Analysis</span>
+                <kbd>⌘↵</kbd>
+            </button>
+            <button id="btnVivaGuide" class="btn btn-outline" title="View Viva Q&A and Architecture Guide">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Viva Guide</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <main class="workspace-container">
+        <!-- Left Panel: Code Input & Editor -->
+        <section class="panel editor-panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                        <line x1="9" y1="20" x2="15" y2="20"></line>
+                        <line x1="12" y1="4" x2="12" y2="20"></line>
+                    </svg>
+                    <span>C Source Editor</span>
+                    <span id="editorStats" class="editor-stats">0 lines, 0 chars</span>
+                </div>
+                <div class="panel-actions">
+                    <button id="btnCopyCode" class="btn-icon" title="Copy C Source">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </button>
+                    <button id="btnResetCode" class="btn-icon" title="Reset to Sample">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="editor-workspace">
+                <div id="lineNumbers" class="line-numbers"></div>
+                <textarea id="codeEditor" spellcheck="false" placeholder="Write or paste C code here..."></textarea>
+            </div>
+            
+            <div class="editor-footer">
+                <span class="editor-hint">💡 Tip: Modify the code and click <strong>Run Analysis</strong> (or press Cmd/Ctrl + Enter) to re-evaluate rules instantly.</span>
+            </div>
+        </section>
+
+        <!-- Right Panel: Analysis Results & Compiler Inspection -->
+        <section class="panel results-panel">
+            <!-- Metrics Summary Bar -->
+            <div class="metrics-bar">
+                <div class="metric-card score-card">
+                    <div class="metric-label">Health Score</div>
+                    <div id="metricScore" class="metric-value">--</div>
+                </div>
+                <div class="metric-card error-card">
+                    <div class="metric-label">Errors</div>
+                    <div id="metricErrors" class="metric-value">0</div>
+                </div>
+                <div class="metric-card warning-card">
+                    <div class="metric-label">Warnings</div>
+                    <div id="metricWarnings" class="metric-value">0</div>
+                </div>
+                <div class="metric-card info-card">
+                    <div class="metric-label">Info Notes</div>
+                    <div id="metricInfo" class="metric-value">0</div>
+                </div>
+                <div class="metric-card safety-card">
+                    <div class="metric-label">Safety Status</div>
+                    <div class="metric-status">
+                        <span class="status-shield">🛡️</span>
+                        <span>Zero Executed</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="tab-nav">
+                <button class="tab-btn active" data-tab="tabDiagnostics">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <span>Diagnostics (<span id="diagBadgeCount">0</span>)</span>
+                </button>
+                <button class="tab-btn" data-tab="tabAst">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    <span>AST Tree</span>
+                </button>
+                <button class="tab-btn" data-tab="tabSymbols">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                    <span>Symbol Table</span>
+                </button>
+                <button class="tab-btn" data-tab="tabTokens">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="4 17 10 11 4 5"></polyline>
+                        <line x1="12" y1="19" x2="20" y2="19"></line>
+                    </svg>
+                    <span>Tokens</span>
+                </button>
+                <button class="tab-btn" data-tab="tabRules">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                    <span>Rules Catalog</span>
+                </button>
+            </div>
+
+            <!-- Tab Contents -->
+            <div class="tab-content-area">
+                <!-- Tab: Diagnostics -->
+                <div id="tabDiagnostics" class="tab-pane active">
+                    <div class="filter-toolbar">
+                        <div class="filter-chips">
+                            <button class="chip active" data-filter="all">All (<span id="chipAllCount">0</span>)</button>
+                            <button class="chip error" data-filter="error">Errors (<span id="chipErrCount">0</span>)</button>
+                            <button class="chip warning" data-filter="warning">Warnings (<span id="chipWarnCount">0</span>)</button>
+                            <button class="chip info" data-filter="info">Info (<span id="chipInfoCount">0</span>)</button>
+                        </div>
+                        <div class="search-box">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input type="text" id="diagSearchInput" placeholder="Filter by rule, variable, message...">
+                        </div>
+                    </div>
+
+                    <div id="diagnosticsList" class="diagnostics-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+                <!-- Tab: AST Tree -->
+                <div id="tabAst" class="tab-pane">
+                    <div class="sub-header">
+                        <span>Abstract Syntax Tree (AST) generated by recursive descent parser:</span>
+                        <button id="btnCopyAst" class="btn btn-sm btn-outline">Copy AST</button>
+                    </div>
+                    <pre id="astOutput" class="code-view"></pre>
+                </div>
+
+                <!-- Tab: Symbol Table -->
+                <div id="tabSymbols" class="tab-pane">
+                    <div class="sub-header">
+                        <span>Lexical Scopes & Resolved Identifiers (Global, Functions, Local Blocks):</span>
+                        <button id="btnCopySymbols" class="btn btn-sm btn-outline">Copy Symbol Table</button>
+                    </div>
+                    <pre id="symbolsOutput" class="code-view"></pre>
+                </div>
+
+                <!-- Tab: Tokens -->
+                <div id="tabTokens" class="tab-pane">
+                    <div class="sub-header">
+                        <span>Scanned Tokens from Hand-Written Lexical Analyzer:</span>
+                    </div>
+                    <div class="tokens-table-container">
+                        <table class="tokens-table">
+                            <thead>
+                                <tr>
+                                    <th>Line:Col</th>
+                                    <th>Token Category</th>
+                                    <th>Lexeme</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tokensTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Tab: Rules Catalog -->
+                <div id="tabRules" class="tab-pane">
+                    <div class="rules-grid" id="rulesGrid">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Viva & Architecture Modal -->
+    <div id="vivaModal" class="modal-backdrop hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span class="badge c11">Compiler Lab</span>
+                    <h2>Viva Q&A & Pipeline Architecture</h2>
+                </div>
+                <button id="btnCloseModal" class="btn-icon">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="viva-section">
+                    <h3>1. Compiler Phase Mapping</h3>
+                    <div class="pipeline-flow">
+                        <div class="pipeline-step">
+                            <strong>Lexical Analysis</strong>
+                            <span><code>lexer.c/.h</code>: converts C source bytes to Token stream, skips comments & preprocessor</span>
+                        </div>
+                        <div class="arrow">→</div>
+                        <div class="pipeline-step">
+                            <strong>Syntax Analysis</strong>
+                            <span><code>parser.c/.h</code>: recursive-descent + precedence climbing AST construction</span>
+                        </div>
+                        <div class="arrow">→</div>
+                        <div class="pipeline-step">
+                            <strong>Semantic Analysis</strong>
+                            <span><code>symtab.c/.h</code>: nested scope stack, identifier resolution & type checking</span>
+                        </div>
+                        <div class="arrow">→</div>
+                        <div class="pipeline-step highlight">
+                            <strong>Static Quality Checks</strong>
+                            <span><code>checks.c/.h</code>: W001-W014 smell & safety rule passes over AST</span>
+                        </div>
+                        <div class="arrow">→</div>
+                        <div class="pipeline-step">
+                            <strong>Diagnostics Report</strong>
+                            <span>Console & self-contained HTML visual report</span>
+                        </div>
+                    </div>
+                    <p class="pipeline-note"><em>Why is there no Code Generation phase?</em> Because this is a static code quality analyzer. Its purpose is verification, safety auditing, and smell detection. Generating target machine code or executing untrusted student code would introduce severe security vulnerabilities.</p>
+                </div>
+
+                <div class="viva-section">
+                    <h3>2. Top University Viva Questions</h3>
+                    <div class="viva-qa-list">
+                        <div class="viva-card">
+                            <div class="viva-q">Q: What is the difference between a Parse Tree and an Abstract Syntax Tree (AST)?</div>
+                            <div class="viva-a">A: A Parse Tree (Concrete Syntax Tree) contains every grammar symbol including punctuation, semicolons, and parentheses. An AST retains only the semantic hierarchy and essential nodes (e.g. operators, operands, statements), omitting syntactic noise.</div>
+                        </div>
+                        <div class="viva-card">
+                            <div class="viva-q">Q: How does your parser resolve operator precedence?</div>
+                            <div class="viva-a">A: We use precedence climbing in <code>parse_expr_precedence</code>. Each binary operator is assigned an integer precedence level and associativity, allowing compact, high-performance recursive expression parsing without 15 separate grammar functions.</div>
+                        </div>
+                        <div class="viva-card">
+                            <div class="viva-q">Q: How are scopes represented in the symbol table?</div>
+                            <div class="viva-a">A: As a linked stack of scope structures (<code>Scope</code>), where each scope contains a dynamic list of declared <code>Symbol</code>s and a pointer to its parent enclosing scope. Variable lookup walks innermost to outermost scope.</div>
+                        </div>
+                        <div class="viva-card">
+                            <div class="viva-q">Q: How does Rule W013 detect division by zero?</div>
+                            <div class="viva-a">A: It inspects binary expressions with operator <code>/</code> or <code>%</code>. If the right-hand child node is an <code>IntLiteral</code> with integer value <code>0</code>, it emits a fatal safety error without ever executing the division.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btnCloseModalBtn" class="btn btn-primary">Close Guide</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="app.js"></script>
+</body>
+</html>
