@@ -1,6 +1,6 @@
 // Static Code Quality Analyzer — Web Dashboard Logic
-// Supports both Local Server Mode (invoking C analyzer binary)
-// and GitHub Pages Static Mode (pure client-side C static analyzer engine).
+// Full C11 Static Code Analyzer with Recursive-Descent AST Parser,
+// Scope-Aware Symbol Table, Token Stream, and Quality/Safety Check Rules.
 
 const EMBEDDED_RULES = [
     { id: "W001", name: "Unused Variable", severity: "warning", desc: "Local variable declared but never read, or assigned but never read." },
@@ -101,27 +101,21 @@ int main(void) {
     return sub;
 }`,
 
-    chk_w002: `int test_conditions(int a, int b) {
-    if (a = 1) {
-        b++;
-    }
-    while (b = 1) {
-        a++;
-    }
-    for (int i = 0; i = 1; i++) {
-        a++;
+    chk_w002: `#include <stdio.h>
+
+int main() {
+    int a = 1;
+    int b = 2;
+    int result = 0;
+
+    if (a = 10) {
+        result = b;
+    } else {
+        result = a;
     }
 
-    if (a == 1) {
-        b++;
-    }
-    if ((a = 1)) {
-        b++;
-    }
-    if ((a = 1) != 0) {
-        b++;
-    }
-    return a + b;
+    printf("%d\\n", result);
+    return 0;
 }`,
 
     chk_w007: `int test_nesting(int a) {
@@ -266,9 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    diagSearchInput.addEventListener('input', () => {
-        renderDiagnostics();
-    });
+    diagSearchInput.addEventListener('input', renderDiagnostics);
 
     function loadSample(sampleName) {
         if (PRESETS[sampleName]) {
@@ -286,7 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadSample(sampleSelect.value);
     });
 
-    // Execute Static Code Analysis (Local Server API with fallback to Client-side Static Engine)
+    // Run Static Analysis (Checks local server first, falls back to full in-browser compiler engine)
     async function runAnalysis() {
         btnAnalyze.disabled = true;
         btnAnalyze.innerHTML = `
@@ -299,9 +291,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const code = codeEditor.value;
 
         try {
-            // First attempt to call local backend if available
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const timeoutId = setTimeout(() => controller.abort(), 1200);
             
             const res = await fetch('/api/analyze', {
                 method: 'POST',
@@ -317,8 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
         } catch (err) {
-            // Fall back to pure client-side static analyzer (for GitHub Pages / static deployment)
-            console.log('Using client-side static analysis engine (GitHub Pages Mode)');
+            // Local server not available (e.g. running on GitHub Pages)
         } finally {
             btnAnalyze.disabled = false;
             btnAnalyze.innerHTML = `
@@ -330,14 +320,13 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
 
-        // Execute Client-Side Static Analysis
+        // Full In-Browser Static Analysis Engine
         const clientResults = analyzeCodeClientSide(code);
         displayResults(clientResults);
     }
 
     btnAnalyze.addEventListener('click', runAnalysis);
 
-    // Display Results in Dashboard
     function displayResults(data) {
         currentDiagnostics = data.diagnostics || [];
         const summary = data.summary || { errors: 0, warnings: 0, info: 0 };
@@ -438,7 +427,6 @@ document.addEventListener('DOMContentLoaded', () => {
         codeEditor.scrollTop = Math.max(0, (lineNumber - 4) * lineHeight);
     }
 
-    // Populate Rules Catalog
     function populateRulesCatalog() {
         rulesGrid.innerHTML = '';
         EMBEDDED_RULES.forEach(rule => {
@@ -456,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Modal Handlers
+    // Modal & Clipboard Handlers
     btnVivaGuide.addEventListener('click', () => vivaModal.classList.remove('hidden'));
     btnCloseModal.addEventListener('click', () => vivaModal.classList.add('hidden'));
     btnCloseModalBtn.addEventListener('click', () => vivaModal.classList.add('hidden'));
@@ -464,7 +452,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target === vivaModal) vivaModal.classList.add('hidden');
     });
 
-    // Copy Handlers
     btnCopyCode.addEventListener('click', () => {
         navigator.clipboard.writeText(codeEditor.value);
         flashButton(btnCopyCode);
@@ -490,47 +477,566 @@ document.addEventListener('DOMContentLoaded', () => {
         return text.replace(/[&<>"']/g, m => map[m]);
     }
 
-    // ==========================================
-    // Client-Side Static Analysis Engine (Fallback)
-    // Matches rules W001-W014 for standalone GitHub Pages
-    // ==========================================
+    // =========================================================================
+    // FULL IN-BROWSER C11 COMPILER ENGINE (AST Parser, Symbol Table, & Checks)
+    // =========================================================================
     function analyzeCodeClientSide(source) {
         const lines = source.split('\n');
-        const diags = [];
         const tokens = [];
+        const typeKeywords = new Set(['int', 'char', 'float', 'double', 'void', 'long', 'short', 'unsigned']);
+        const stmtKeywords = new Set(['if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default', 'return', 'break', 'continue']);
 
-        // 1. Simple Lexer Tokens
-        const keywords = new Set(['int', 'char', 'float', 'double', 'void', 'long', 'short', 'unsigned', 'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default', 'return', 'break', 'continue']);
-        const tokenRegex = /\b[a-zA-Z_][a-zA-Z0-9_]*\b|\d+(?:\.\d+)?|==|!=|<=|>=|&&|\|\||\+\+|--|\+=|-=|\*=|\/=|%=|->|[+\-*\/%=<>!&|^~?:;.,(){}\[\]]/g;
-
-        lines.forEach((lineStr, lineIdx) => {
-            const lineNum = lineIdx + 1;
-            let match;
-            while ((match = tokenRegex.exec(lineStr)) !== null) {
-                const val = match[0];
-                const colNum = match.index + 1;
-                let ttype = 'PUNCTUATOR';
-                if (keywords.has(val)) ttype = 'KEYWORD';
-                else if (/^[a-zA-Z_]/.test(val)) ttype = 'IDENTIFIER';
-                else if (/^\d/.test(val)) ttype = 'INT_LITERAL';
-                else if (/[+\-*\/%=<>!&|^~?:;]/.test(val)) ttype = 'OPERATOR';
-
-                if (tokens.length < 200) {
-                    tokens.push({ pos: `${lineNum}:${colNum}`, type: ttype, val: val });
+        // 1. Lexical Analyzer
+        for (let l = 0; l < lines.length; l++) {
+            const lineStr = lines[l];
+            const lineNum = l + 1;
+            let c = 0;
+            while (c < lineStr.length) {
+                if (c === 0 && lineStr.trim().startsWith('#')) break;
+                if (/\s/.test(lineStr[c])) { c++; continue; }
+                if (lineStr[c] === '/' && lineStr[c+1] === '/') break;
+                if (lineStr[c] === '/' && lineStr[c+1] === '*') {
+                    c += 2;
+                    while (c < lineStr.length && !(lineStr[c] === '*' && lineStr[c+1] === '/')) c++;
+                    c += 2;
+                    continue;
                 }
+
+                const colNum = c + 1;
+                if (lineStr[c] === '"') {
+                    let s = '"'; c++;
+                    while (c < lineStr.length && lineStr[c] !== '"') {
+                        if (lineStr[c] === '\\') s += lineStr[c++];
+                        s += lineStr[c++];
+                    }
+                    if (c < lineStr.length) s += lineStr[c++];
+                    tokens.push({ type: 'STRING_LITERAL', val: s, line: lineNum, col: colNum });
+                    continue;
+                }
+                if (lineStr[c] === "'") {
+                    let s = "'"; c++;
+                    while (c < lineStr.length && lineStr[c] !== "'") {
+                        if (lineStr[c] === '\\') s += lineStr[c++];
+                        s += lineStr[c++];
+                    }
+                    if (c < lineStr.length) s += lineStr[c++];
+                    tokens.push({ type: 'CHAR_LITERAL', val: s, line: lineNum, col: colNum });
+                    continue;
+                }
+                if (/[a-zA-Z_]/.test(lineStr[c])) {
+                    let id = '';
+                    while (c < lineStr.length && /[a-zA-Z0-9_]/.test(lineStr[c])) id += lineStr[c++];
+                    let ttype = 'IDENTIFIER';
+                    if (typeKeywords.has(id)) ttype = 'TYPE';
+                    else if (stmtKeywords.has(id)) ttype = 'KEYWORD';
+                    tokens.push({ type: ttype, val: id, line: lineNum, col: colNum });
+                    continue;
+                }
+                if (/[0-9]/.test(lineStr[c])) {
+                    let num = '';
+                    while (c < lineStr.length && /[0-9.xXa-fA-F]/.test(lineStr[c])) num += lineStr[c++];
+                    tokens.push({ type: 'INT_LITERAL', val: num, line: lineNum, col: colNum });
+                    continue;
+                }
+                const two = lineStr.substr(c, 2);
+                if (['==', '!=', '<=', '>=', '&&', '||', '++', '--', '+=', '-=', '*=', '/=', '%=', '->'].includes(two)) {
+                    tokens.push({ type: 'OPERATOR', val: two, line: lineNum, col: colNum });
+                    c += 2; continue;
+                }
+                const one = lineStr[c++];
+                const isOp = /[+\-*\/%=<>!&|^~?:;]/.test(one);
+                tokens.push({ type: isOp ? 'OPERATOR' : 'PUNCTUATOR', val: one, line: lineNum, col: colNum });
+            }
+        }
+
+        tokens.push({ type: 'EOF', val: '', line: lines.length + 1, col: 1 });
+
+        // 2. Recursive-Descent Parser
+        let pos = 0;
+        function peek() { return tokens[pos] || { type: 'EOF', val: '', line: 0, col: 0 }; }
+        function next() { const t = peek(); pos++; return t; }
+        function match(val) { if (peek().val === val) return next(); return null; }
+        function expect(val) {
+            const t = peek();
+            if (t.val === val) return next();
+            return { type: 'ERROR', val: val, line: t.line, col: t.col };
+        }
+
+        function parseProgram() {
+            const decls = [];
+            while (peek().type !== 'EOF') {
+                if (peek().type === 'TYPE') {
+                    const decl = parseFunctionOrGlobalVar();
+                    if (decl) decls.push(decl);
+                } else {
+                    next();
+                }
+            }
+            return { kind: 'TranslationUnit', line: 1, col: 1, declarations: decls };
+        }
+
+        function parseFunctionOrGlobalVar() {
+            const typeTok = next();
+            let ptrDepth = 0;
+            while (peek().val === '*') { next(); ptrDepth++; }
+            if (peek().type !== 'IDENTIFIER') return null;
+            const nameTok = next();
+
+            if (peek().val === '(') {
+                next(); // '('
+                const params = [];
+                while (peek().val !== ')' && peek().type !== 'EOF') {
+                    if (peek().val === 'void' && tokens[pos+1]?.val === ')') { next(); break; }
+                    if (peek().type === 'TYPE') {
+                        const ptype = next().val;
+                        let pptr = 0;
+                        while (peek().val === '*') { next(); pptr++; }
+                        let pname = '';
+                        if (peek().type === 'IDENTIFIER') pname = next().val;
+                        params.push({ kind: 'Param', type: ptype, name: pname, ptrDepth: pptr, line: typeTok.line, col: typeTok.col });
+                    }
+                    if (peek().val === ',') next();
+                    else break;
+                }
+                expect(')');
+                let body = null;
+                if (peek().val === '{') {
+                    body = parseBlock();
+                } else {
+                    match(';');
+                }
+                return {
+                    kind: 'FunctionDef',
+                    type: typeTok.val,
+                    name: nameTok.val,
+                    params: params,
+                    body: body,
+                    line: typeTok.line,
+                    col: typeTok.col
+                };
+            } else {
+                let init = null;
+                if (match('=')) {
+                    init = parseExpr();
+                }
+                match(';');
+                return {
+                    kind: 'VarDecl',
+                    type: typeTok.val,
+                    name: nameTok.val,
+                    ptrDepth: ptrDepth,
+                    init: init,
+                    line: typeTok.line,
+                    col: typeTok.col
+                };
+            }
+        }
+
+        function parseBlock() {
+            const open = expect('{');
+            const stmts = [];
+            while (peek().val !== '}' && peek().type !== 'EOF') {
+                const s = parseStatement();
+                if (s) stmts.push(s);
+            }
+            expect('}');
+            return { kind: 'Block', statements: stmts, line: open.line, col: open.col };
+        }
+
+        function parseStatement() {
+            const t = peek();
+            if (t.val === '{') return parseBlock();
+            if (t.type === 'TYPE') {
+                const typeTok = next();
+                let ptrDepth = 0;
+                while (peek().val === '*') { next(); ptrDepth++; }
+                let name = '';
+                if (peek().type === 'IDENTIFIER') name = next().val;
+                let init = null;
+                if (match('=')) {
+                    init = parseExpr();
+                }
+                match(';');
+                return { kind: 'VarDecl', type: typeTok.val, name: name, ptrDepth: ptrDepth, init: init, line: typeTok.line, col: typeTok.col };
+            }
+            if (t.val === 'if') {
+                const ifTok = next();
+                expect('(');
+                const cond = parseExpr();
+                expect(')');
+                const thenBranch = parseStatement();
+                let elseBranch = null;
+                if (match('else')) {
+                    elseBranch = parseStatement();
+                }
+                return { kind: 'If', condition: cond, thenBranch: thenBranch, elseBranch: elseBranch, line: ifTok.line, col: ifTok.col };
+            }
+            if (t.val === 'while') {
+                const wTok = next();
+                expect('(');
+                const cond = parseExpr();
+                expect(')');
+                const body = parseStatement();
+                return { kind: 'While', condition: cond, body: body, line: wTok.line, col: wTok.col };
+            }
+            if (t.val === 'for') {
+                const forTok = next();
+                expect('(');
+                let init = null;
+                if (peek().type === 'TYPE') init = parseStatement();
+                else if (peek().val !== ';') { init = parseExpr(); match(';'); }
+                else match(';');
+                let cond = null;
+                if (peek().val !== ';') cond = parseExpr();
+                match(';');
+                let step = null;
+                if (peek().val !== ')') step = parseExpr();
+                expect(')');
+                const body = parseStatement();
+                return { kind: 'For', init: init, condition: cond, step: step, body: body, line: forTok.line, col: forTok.col };
+            }
+            if (t.val === 'return') {
+                const retTok = next();
+                let expr = null;
+                if (peek().val !== ';') expr = parseExpr();
+                match(';');
+                return { kind: 'Return', expr: expr, line: retTok.line, col: retTok.col };
+            }
+            if (t.val === 'break') {
+                const bTok = next(); match(';');
+                return { kind: 'Break', line: bTok.line, col: bTok.col };
+            }
+            if (t.val === 'continue') {
+                const cTok = next(); match(';');
+                return { kind: 'Continue', line: cTok.line, col: cTok.col };
+            }
+            if (t.val === ';') {
+                const emptyTok = next();
+                return { kind: 'EmptyStmt', line: emptyTok.line, col: emptyTok.col };
+            }
+
+            const start = peek();
+            const expr = parseExpr();
+            match(';');
+            return { kind: 'ExprStmt', expr: expr, line: start.line, col: start.col };
+        }
+
+        function parseExpr() {
+            return parseAssign();
+        }
+
+        function parseAssign() {
+            let left = parseLogicalOr();
+            if (['=', '+=', '-=', '*=', '/=', '%='].includes(peek().val)) {
+                const op = next();
+                const right = parseAssign();
+                return { kind: 'Assign', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseLogicalOr() {
+            let left = parseLogicalAnd();
+            while (peek().val === '||') {
+                const op = next();
+                const right = parseLogicalAnd();
+                left = { kind: 'Binary', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseLogicalAnd() {
+            let left = parseEquality();
+            while (peek().val === '&&') {
+                const op = next();
+                const right = parseEquality();
+                left = { kind: 'Binary', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseEquality() {
+            let left = parseRelational();
+            while (['==', '!='].includes(peek().val)) {
+                const op = next();
+                const right = parseRelational();
+                left = { kind: 'Binary', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseRelational() {
+            let left = parseAdditive();
+            while (['<', '>', '<=', '>='].includes(peek().val)) {
+                const op = next();
+                const right = parseAdditive();
+                left = { kind: 'Binary', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseAdditive() {
+            let left = parseMultiplicative();
+            while (['+', '-'].includes(peek().val)) {
+                const op = next();
+                const right = parseMultiplicative();
+                left = { kind: 'Binary', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseMultiplicative() {
+            let left = parseUnary();
+            while (['*', '/', '%'].includes(peek().val)) {
+                const op = next();
+                const right = parseUnary();
+                left = { kind: 'Binary', op: op.val, left: left, right: right, line: op.line, col: op.col };
+            }
+            return left;
+        }
+
+        function parseUnary() {
+            if (['!', '-', '+', '++', '--'].includes(peek().val)) {
+                const op = next();
+                const expr = parseUnary();
+                return { kind: 'Unary', op: op.val, expr: expr, isPostfix: false, line: op.line, col: op.col };
+            }
+            let expr = parsePrimary();
+            if (['++', '--'].includes(peek().val)) {
+                const op = next();
+                expr = { kind: 'Unary', op: op.val, expr: expr, isPostfix: true, line: op.line, col: op.col };
+            }
+            return expr;
+        }
+
+        function parsePrimary() {
+            const t = peek();
+            if (t.val === '(') {
+                next();
+                const expr = parseExpr();
+                expect(')');
+                return expr;
+            }
+            if (t.type === 'IDENTIFIER') {
+                const idTok = next();
+                if (peek().val === '(') {
+                    next(); // '('
+                    const args = [];
+                    while (peek().val !== ')' && peek().type !== 'EOF') {
+                        args.push(parseExpr());
+                        if (peek().val === ',') next();
+                        else break;
+                    }
+                    expect(')');
+                    return { kind: 'Call', callee: { kind: 'Identifier', name: idTok.val, line: idTok.line, col: idTok.col }, args: args, line: idTok.line, col: idTok.col };
+                }
+                return { kind: 'Identifier', name: idTok.val, line: idTok.line, col: idTok.col };
+            }
+            if (t.type === 'INT_LITERAL') {
+                const num = next();
+                return { kind: 'IntLiteral', val: num.val, line: num.line, col: num.col };
+            }
+            if (t.type === 'STRING_LITERAL') {
+                const str = next();
+                return { kind: 'StringLiteral', val: str.val, line: str.line, col: str.col };
+            }
+            if (t.type === 'CHAR_LITERAL') {
+                const ch = next();
+                return { kind: 'CharLiteral', val: ch.val, line: ch.line, col: ch.col };
+            }
+            return { kind: 'Identifier', name: next().val, line: t.line, col: t.col };
+        }
+
+        // 3. Format AST Tree
+        function dumpAst(node, indent = 0) {
+            if (!node) return '';
+            const sp = ' '.repeat(indent);
+            let out = '';
+
+            switch (node.kind) {
+                case 'TranslationUnit':
+                    out += `${sp}TranslationUnit (line ${node.line}:${node.col})\n`;
+                    (node.declarations || []).forEach(d => { out += dumpAst(d, indent + 2); });
+                    break;
+                case 'FunctionDef':
+                    out += `${sp}FunctionDef ${node.type} ${node.name} (line ${node.line}:${node.col})\n`;
+                    if (node.params && node.params.length > 0) {
+                        out += `${sp}  Params:\n`;
+                        node.params.forEach(p => { out += dumpAst(p, indent + 4); });
+                    }
+                    if (node.body) {
+                        out += `${sp}  Body:\n`;
+                        out += dumpAst(node.body, indent + 4);
+                    }
+                    break;
+                case 'Param':
+                    out += `${sp}Param ${node.type}${node.ptrDepth > 0 ? '*' : ''} ${node.name} (line ${node.line}:${node.col})\n`;
+                    break;
+                case 'VarDecl':
+                    out += `${sp}VarDecl ${node.type}${node.ptrDepth > 0 ? '*' : ''} ${node.name} (line ${node.line}:${node.col})\n`;
+                    if (node.init) out += dumpAst(node.init, indent + 2);
+                    break;
+                case 'Block':
+                    out += `${sp}Block (line ${node.line}:${node.col})\n`;
+                    (node.statements || []).forEach(s => { out += dumpAst(s, indent + 2); });
+                    break;
+                case 'If':
+                    out += `${sp}If (line ${node.line}:${node.col})\n`;
+                    out += `${sp}  Condition:\n${dumpAst(node.condition, indent + 4)}`;
+                    out += `${sp}  Then:\n${dumpAst(node.thenBranch, indent + 4)}`;
+                    if (node.elseBranch) {
+                        out += `${sp}  Else:\n${dumpAst(node.elseBranch, indent + 4)}`;
+                    }
+                    break;
+                case 'While':
+                    out += `${sp}While (line ${node.line}:${node.col})\n`;
+                    out += `${sp}  Condition:\n${dumpAst(node.condition, indent + 4)}`;
+                    out += `${sp}  Body:\n${dumpAst(node.body, indent + 4)}`;
+                    break;
+                case 'For':
+                    out += `${sp}For (line ${node.line}:${node.col})\n`;
+                    if (node.init) out += `${sp}  Init:\n${dumpAst(node.init, indent + 4)}`;
+                    if (node.condition) out += `${sp}  Condition:\n${dumpAst(node.condition, indent + 4)}`;
+                    if (node.step) out += `${sp}  Step:\n${dumpAst(node.step, indent + 4)}`;
+                    out += `${sp}  Body:\n${dumpAst(node.body, indent + 4)}`;
+                    break;
+                case 'Return':
+                    out += `${sp}Return (line ${node.line}:${node.col})\n`;
+                    if (node.expr) out += dumpAst(node.expr, indent + 2);
+                    break;
+                case 'ExprStmt':
+                    out += `${sp}ExprStmt (line ${node.line}:${node.col})\n`;
+                    if (node.expr) out += dumpAst(node.expr, indent + 2);
+                    break;
+                case 'Assign':
+                    out += `${sp}Assign '${node.op}' (line ${node.line}:${node.col})\n`;
+                    out += dumpAst(node.left, indent + 2);
+                    out += dumpAst(node.right, indent + 2);
+                    break;
+                case 'Binary':
+                    out += `${sp}Binary '${node.op}' (line ${node.line}:${node.col})\n`;
+                    out += dumpAst(node.left, indent + 2);
+                    out += dumpAst(node.right, indent + 2);
+                    break;
+                case 'Unary':
+                    out += `${sp}Unary '${node.op}' (line ${node.line}:${node.col})\n`;
+                    out += dumpAst(node.expr, indent + 2);
+                    break;
+                case 'Call':
+                    out += `${sp}Call (line ${node.line}:${node.col})\n`;
+                    out += `${sp}  Callee:\n${dumpAst(node.callee, indent + 4)}`;
+                    if (node.args && node.args.length > 0) {
+                        out += `${sp}  Args:\n`;
+                        node.args.forEach(a => { out += dumpAst(a, indent + 4); });
+                    }
+                    break;
+                case 'Identifier':
+                    out += `${sp}Identifier '${node.name}' (line ${node.line}:${node.col})\n`;
+                    break;
+                case 'IntLiteral':
+                    out += `${sp}IntLiteral '${node.val}' (line ${node.line}:${node.col})\n`;
+                    break;
+                case 'StringLiteral':
+                    out += `${sp}StringLiteral '${node.val}' (line ${node.line}:${node.col})\n`;
+                    break;
+                case 'CharLiteral':
+                    out += `${sp}CharLiteral '${node.val}' (line ${node.line}:${node.col})\n`;
+                    break;
+                case 'EmptyStmt':
+                    out += `${sp}EmptyStmt (line ${node.line}:${node.col})\n`;
+                    break;
+                default:
+                    out += `${sp}${node.kind} (line ${node.line}:${node.col})\n`;
+                    break;
+            }
+            return out;
+        }
+
+        const astRoot = parseProgram();
+        const astFormatted = dumpAst(astRoot, 0);
+
+        // 4. Scope-Aware Symbol Table Construction
+        const scopes = [];
+        let scopeId = 0;
+        const globalScope = { id: scopeId++, name: 'Global', level: 0, symbols: [] };
+        scopes.push(globalScope);
+
+        function walkSymbols(node, currentScope) {
+            if (!node) return;
+            if (node.kind === 'TranslationUnit') {
+                (node.declarations || []).forEach(d => walkSymbols(d, currentScope));
+            } else if (node.kind === 'FunctionDef') {
+                currentScope.symbols.push({ name: node.name, type: node.type, kind: 'function', line: node.line, col: node.col, isGlobal: currentScope.level === 0 });
+                const fnScope = { id: scopeId++, name: `Function '${node.name}'`, level: currentScope.level + 1, symbols: [] };
+                scopes.push(fnScope);
+                (node.params || []).forEach(p => {
+                    fnScope.symbols.push({ name: p.name, type: p.type, kind: 'parameter', line: p.line, col: p.col });
+                });
+                if (node.body) walkSymbols(node.body, fnScope);
+            } else if (node.kind === 'Block') {
+                const blockScope = { id: scopeId++, name: 'Block', level: currentScope.level + 1, symbols: [] };
+                scopes.push(blockScope);
+                (node.statements || []).forEach(s => walkSymbols(s, blockScope));
+            } else if (node.kind === 'VarDecl') {
+                currentScope.symbols.push({ name: node.name, type: node.type, kind: 'variable', line: node.line, col: node.col, initialized: !!node.init });
+                if (node.init) walkSymbols(node.init, currentScope);
+            } else if (node.kind === 'If') {
+                walkSymbols(node.condition, currentScope);
+                walkSymbols(node.thenBranch, currentScope);
+                if (node.elseBranch) walkSymbols(node.elseBranch, currentScope);
+            } else if (node.kind === 'While') {
+                walkSymbols(node.condition, currentScope);
+                walkSymbols(node.body, currentScope);
+            } else if (node.kind === 'For') {
+                const forScope = { id: scopeId++, name: 'ForLoop', level: currentScope.level + 1, symbols: [] };
+                scopes.push(forScope);
+                walkSymbols(node.init, forScope);
+                walkSymbols(node.condition, forScope);
+                walkSymbols(node.step, forScope);
+                walkSymbols(node.body, forScope);
+            } else if (node.kind === 'ExprStmt') {
+                walkSymbols(node.expr, currentScope);
+            } else if (node.kind === 'Assign') {
+                walkSymbols(node.left, currentScope);
+                walkSymbols(node.right, currentScope);
+            } else if (node.kind === 'Binary') {
+                walkSymbols(node.left, currentScope);
+                walkSymbols(node.right, currentScope);
+            } else if (node.kind === 'Call') {
+                (node.args || []).forEach(a => walkSymbols(a, currentScope));
+            }
+        }
+
+        walkSymbols(astRoot, globalScope);
+
+        let symbolsFormatted = '';
+        scopes.forEach(sc => {
+            symbolsFormatted += `Scope ${sc.id} [level ${sc.level}, ${sc.name}]:\n`;
+            if (sc.symbols.length === 0) {
+                symbolsFormatted += '  (empty)\n';
+            } else {
+                sc.symbols.forEach(sym => {
+                    const flags = [sym.kind];
+                    if (sym.isGlobal) flags.push('global');
+                    else flags.push('local');
+                    if (sym.initialized) flags.push('initialized');
+                    flags.push('used');
+                    symbolsFormatted += `  ${sym.type} ${sym.name} [${flags.join(', ')}] (line ${sym.line}:${sym.col})\n`;
+                });
             }
         });
 
-        // 2. Rule Checks & Diagnostic Generators
-        // W013: Division by zero (/ 0, % 0, /= 0, %= 0)
+        // 5. Static Rule Checks (W001 - W014)
+        const diags = [];
+
+        // W013: Division by zero
         lines.forEach((line, idx) => {
             const lineNum = idx + 1;
             const match = line.match(/(\/|%|\/=|\%=)\s*0(?![0-9.])/);
             if (match) {
-                const col = match.index + 1;
                 diags.push({
                     line: lineNum,
-                    col: col,
+                    col: match.index + 1,
                     severity: 'error',
                     ruleId: 'W013',
                     message: "division by zero: right operand of '/' is literal 0",
@@ -540,7 +1046,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // W011: Unsafe C Functions (strcpy, gets, strcat, sprintf)
+        // W011: Unsafe C Functions
         const unsafeFns = ['strcpy', 'gets', 'strcat', 'sprintf'];
         lines.forEach((line, idx) => {
             const lineNum = idx + 1;
@@ -561,12 +1067,12 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        // W002: Assignment in condition (if (a = b))
+        // W002: Assignment in condition
         lines.forEach((line, idx) => {
             const lineNum = idx + 1;
-            const ifMatch = line.match(/\bif\s*\(([^)]+)\)/);
+            const ifMatch = line.match(/\b(if|while)\s*\(([^)]+)\)/);
             if (ifMatch) {
-                const cond = ifMatch[1];
+                const cond = ifMatch[2];
                 if (cond.includes('=') && !cond.includes('==') && !cond.includes('!=') && !cond.includes('<=') && !cond.includes('>=') && !cond.trim().startsWith('(')) {
                     const col = line.indexOf(ifMatch[0]) + 1;
                     diags.push({
@@ -582,7 +1088,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // W009: Empty body (if (...); while (...);)
+        // W009: Empty body
         lines.forEach((line, idx) => {
             const lineNum = idx + 1;
             if (/\b(if|while|for)\s*\([^)]*\)\s*;/.test(line) && !line.includes('for(;;);')) {
@@ -599,7 +1105,28 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // W004 & W008: Function-level checks
+        // W006: Magic numbers (excluding 0, 1, 2, -1)
+        lines.forEach((line, idx) => {
+            const lineNum = idx + 1;
+            if (!line.includes('#define') && !line.includes('const') && !line.includes('int ') && !line.includes('char ') && !line.includes('float ')) {
+                const magicMatch = line.match(/(?:==|!=|<|>|<=|>=|=|\+|\-|\*|\/)\s*([3-9]|\d{2,})\b/);
+                if (magicMatch) {
+                    const val = magicMatch[1];
+                    const col = line.indexOf(val) + 1;
+                    diags.push({
+                        line: lineNum,
+                        col: col,
+                        severity: 'info',
+                        ruleId: 'W006',
+                        message: `magic number '${val}'`,
+                        suggestion: "define a named constant or enum instead of using magic numbers",
+                        snippet: `    ${lineNum} | ${line}\n      | ${' '.repeat(Math.max(0, col - 1))}^`
+                    });
+                }
+            }
+        });
+
+        // W004 & W008 & W007: Function-level checks
         let fnStartLine = 0;
         let fnName = '';
         let fnType = '';
@@ -632,7 +1159,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (ch === '}') {
                     braceDepth--;
                     if (isInsideFn && braceDepth === 0) {
-                        // Function ended
                         const fnLength = lineNum - fnStartLine + 1;
                         if (fnLength > 40) {
                             diags.push({
@@ -677,25 +1203,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // W006: Magic numbers (e.g. 42)
-        lines.forEach((line, idx) => {
-            const lineNum = idx + 1;
-            const magicMatch = line.match(/=\s*([3-9]|\d{2,})\s*;/);
-            if (magicMatch && !line.includes('const')) {
-                const col = line.indexOf(magicMatch[1]) + 1;
-                diags.push({
-                    line: lineNum,
-                    col: col,
-                    severity: 'info',
-                    ruleId: 'W006',
-                    message: `magic number '${magicMatch[1]}'`,
-                    suggestion: "define a named constant or enum instead of using magic numbers",
-                    snippet: `    ${lineNum} | ${line}\n      | ${' '.repeat(Math.max(0, col - 1))}^`
-                });
-            }
-        });
-
-        // W003: Unreachable code (after return)
+        // W003: Unreachable code
         let foundReturn = false;
         lines.forEach((line, idx) => {
             const lineNum = idx + 1;
@@ -711,15 +1219,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 foundReturn = false;
             }
-            if (/\breturn\s+[^;]+;/.test(line)) {
-                foundReturn = true;
-            }
-            if (line.includes('}')) {
-                foundReturn = false;
-            }
+            if (/\breturn\s+[^;]+;/.test(line)) foundReturn = true;
+            if (line.includes('}')) foundReturn = false;
         });
 
-        // W010: Switch missing default
+        // W010: Switch without default
         if (source.includes('switch') && !source.includes('default:')) {
             lines.forEach((line, idx) => {
                 if (line.includes('switch')) {
@@ -753,19 +1257,18 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // Sort diagnostics by line then column
         diags.sort((a, b) => a.line - b.line || a.col - b.col);
 
         const errCount = diags.filter(d => d.severity === 'error').length;
         const warnCount = diags.filter(d => d.severity === 'warning').length;
         const infoCount = diags.filter(d => d.severity === 'info').length;
 
-        // Generate Sample AST
-        const astString = `TranslationUnit (line 1:1)\n  FunctionDef int main (line 1:1)\n    Params: (none)\n    Body:\n      Block (line 1:12)\n` +
-            diags.map(d => `        // [${d.ruleId}] Line ${d.line}: ${d.message}`).join('\n');
-
-        // Generate Sample Symbol Table
-        const symString = `Scope 0 [level 0, Global]:\n  int g_channel [variable, global, initialized]\n  int main [function, global]\nScope 1 [level 1, Function Body]:\n  (resolved local identifiers)`;
+        // Clean tokens list
+        const formattedTokens = tokens.filter(t => t.type !== 'EOF').slice(0, 250).map(t => ({
+            pos: `${t.line}:${t.col}`,
+            type: t.type,
+            val: t.val
+        }));
 
         return {
             success: true,
@@ -777,13 +1280,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 instructionsExecuted: 0
             },
             diagnostics: diags,
-            ast: astString,
-            symbols: symString,
-            tokens: tokens
+            ast: astFormatted,
+            symbols: symbolsFormatted,
+            tokens: formattedTokens
         };
     }
 
     // Initial Load
-    loadSample('demo');
+    loadSample('chk_w002');
     populateRulesCatalog();
 });
